@@ -2,6 +2,7 @@ const prisma = require('../config/prisma');
 const socketAuthMiddleware = require('./socketAuth');
 const { isSpamming, sanitizeText } = require('../middleware/security');
 const { messageSendSchema } = require('../utils/validation');
+const { notifyOfflineRecipients } = require('../utils/push');
 
 // userId -> Set(socketId) — юзер може мати кілька вкладок/пристроїв
 const onlineUsers = new Map();
@@ -67,6 +68,14 @@ function registerSocketHandlers(io) {
 
         io.to(`chat:${data.chatId}`).emit('message:new', message);
         ack?.({ message });
+
+        // Офлайн-учасники отримують системне push-сповіщення (як у Telegram)
+        notifyOfflineRecipients({
+          chatId: data.chatId,
+          senderId: userId,
+          senderNickname: socket.user.nickname,
+          preview: content || `[${data.type}]`,
+        }).catch((err) => console.error('Push notification error:', err.message));
       } catch (err) {
         ack?.({ error: err.message || 'Не вдалося надіслати повідомлення' });
       }
@@ -140,6 +149,39 @@ function registerSocketHandlers(io) {
     });
     socket.on('typing:stop', ({ chatId }) => {
       socket.to(`chat:${chatId}`).emit('typing:stop', { chatId, userId });
+    });
+
+    // --- Дзвінки (WebRTC-сигналінг: сервер лише передає повідомлення,
+    // сам голос/відео йде напряму між клієнтами через P2P-з'єднання) ---
+    socket.on('call:invite', async ({ chatId, callType }) => {
+      // callType: 'audio' | 'video'
+      const membership = await prisma.chatMember.findUnique({
+        where: { chatId_userId: { chatId, userId } },
+      });
+      if (!membership) return;
+      socket.to(`chat:${chatId}`).emit('call:invite', {
+        chatId,
+        callType,
+        fromUserId: userId,
+        fromNickname: socket.user.nickname,
+      });
+    });
+
+    socket.on('call:accept', ({ chatId, toUserId }) => {
+      io.to(`user:${toUserId}`).emit('call:accept', { chatId, fromUserId: userId });
+    });
+
+    socket.on('call:reject', ({ chatId, toUserId }) => {
+      io.to(`user:${toUserId}`).emit('call:reject', { chatId, fromUserId: userId });
+    });
+
+    socket.on('call:end', ({ chatId, toUserId }) => {
+      io.to(`user:${toUserId}`).emit('call:end', { chatId, fromUserId: userId });
+    });
+
+    // WebRTC-обмін технічними даними для встановлення прямого з'єднання
+    socket.on('call:signal', ({ toUserId, signal }) => {
+      io.to(`user:${toUserId}`).emit('call:signal', { fromUserId: userId, signal });
     });
 
     // --- Відключення ---

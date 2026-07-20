@@ -39,6 +39,7 @@ app.use('/api/friends', require('./routes/friends'));
 app.use('/api/chats', require('./routes/chats'));
 app.use('/api/messages', require('./routes/messages'));
 app.use('/api/upload', require('./routes/upload'));
+app.use('/api/push', require('./routes/push'));
 app.use('/api/admin', require('./routes/admin'));
 
 app.use(notFound);
