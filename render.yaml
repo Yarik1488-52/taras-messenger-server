@@ -3,7 +3,7 @@ services:
     name: taras-messenger-api
     runtime: node
     plan: free
-    buildCommand: npm install && npx prisma generate
+    buildCommand: npm install && chmod +x node_modules/.bin/* && npx prisma generate
     startCommand: npx prisma migrate deploy && node src/index.js
     envVars:
       - key: JWT_ACCESS_SECRET
