@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: taras-messenger-api
+    runtime: node
+    plan: free
+    buildCommand: npm install && npx prisma generate
+    startCommand: npx prisma migrate deploy && node src/index.js
+    envVars:
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: CLIENT_ORIGINS
+        value: capacitor://localhost,http://localhost,file://
+      - key: DATABASE_URL
+        fromDatabase:
+          name: taras-db
+          property: connectionString
+databases:
+  - name: taras-db
+    plan: free
