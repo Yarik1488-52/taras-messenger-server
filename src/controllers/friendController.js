@@ -94,4 +94,17 @@ async function removeFriend(req, res, next) {
   }
 }
 
-module.exports = { sendRequest, respondRequest, listFriends, removeFriend };
+async function listIncomingRequests(req, res, next) {
+  try {
+    const rows = await prisma.friendship.findMany({
+      where: { receiverId: req.user.id, status: 'PENDING' },
+      include: { sender: { select: { id: true, nickname: true, avatarUrl: true, statusText: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json({ requests: rows.map((r) => ({ friendshipId: r.id, ...r.sender, createdAt: r.createdAt })) });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { sendRequest, respondRequest, listFriends, removeFriend, listIncomingRequests };
