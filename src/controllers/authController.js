@@ -3,12 +3,15 @@ const { hashPassword, verifyPassword } = require('../utils/password');
 const { signAccessToken, signRefreshToken, verifyRefreshToken } = require('../utils/jwt');
 const { registerSchema, loginSchema, changePasswordSchema } = require('../utils/validation');
 const { sanitizeText } = require('../middleware/security');
+const otpStore = require('../utils/otpStore');
+const { sendLoginCode } = require('../utils/mailer');
 
 function publicUser(u) {
   return {
     id: u.id,
     email: u.email,
     nickname: u.nickname,
+    username: u.username,
     avatarUrl: u.avatarUrl,
     statusText: u.statusText,
     presence: u.presence,
@@ -111,4 +114,65 @@ async function logout(req, res) {
   res.json({ message: 'Вихід виконано' });
 }
 
-module.exports = { register, login, refresh, changePassword, logout, publicUser };
+// --- Вхід/реєстрація через одноразовий код на email (альтернатива паролю) ---
+
+async function requestEmailCode(req, res, next) {
+  try {
+    const { email } = req.body;
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: 'Некоректний email' });
+    }
+
+    const code = otpStore.issueCode(email);
+    await sendLoginCode(email, code);
+
+    const existing = await prisma.user.findUnique({ where: { email } });
+    res.json({ message: 'Код надіслано на пошту', isNewUser: !existing });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function verifyEmailCode(req, res, next) {
+  try {
+    const { email, code, nickname } = req.body;
+    if (!email || !code) return res.status(400).json({ error: 'email і code обовʼязкові' });
+
+    const result = otpStore.verifyCode(email, code);
+    if (!result.ok) return res.status(400).json({ error: result.reason });
+
+    let user = await prisma.user.findUnique({ where: { email } });
+
+    if (!user) {
+      // Новий користувач — потрібен нікнейм для завершення реєстрації
+      if (!nickname) {
+        return res.status(200).json({ needNickname: true });
+      }
+      const cleanNickname = sanitizeText(nickname).slice(0, 32);
+      const nicknameTaken = await prisma.user.findUnique({ where: { nickname: cleanNickname } });
+      if (nicknameTaken) return res.status(409).json({ error: 'Цей нікнейм вже зайнятий' });
+
+      // Пароля в цього акаунта немає — заходить лише через email-код;
+      // passwordHash все одно обовʼязковий у схемі, тож ставимо випадковий
+      // недоступний для підбору хеш (жодного паролю користувач не знає й не використовує).
+      const randomPassword = require('crypto').randomBytes(32).toString('hex');
+      const passwordHash = await hashPassword(randomPassword);
+
+      user = await prisma.user.create({
+        data: { email, nickname: cleanNickname, passwordHash, presence: 'ONLINE' },
+      });
+    } else {
+      if (user.isBanned) return res.status(403).json({ error: 'Акаунт заблоковано', reason: user.banReason });
+      await prisma.user.update({ where: { id: user.id }, data: { presence: 'ONLINE', lastSeenAt: new Date() } });
+    }
+
+    const accessToken = signAccessToken({ sub: user.id, role: user.role });
+    const refreshToken = signRefreshToken({ sub: user.id });
+
+    res.json({ user: publicUser(user), accessToken, refreshToken });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { register, login, refresh, changePassword, logout, publicUser, requestEmailCode, verifyEmailCode };

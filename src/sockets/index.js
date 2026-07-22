@@ -48,6 +48,25 @@ function registerSocketHandlers(io) {
           return ack?.({ error: 'У цьому каналі писати можуть лише адміністратори' });
         }
 
+        // Якщо це приватний чат і одна сторона заблокувала іншу — не даємо писати
+        if (chat.type === 'PRIVATE') {
+          const otherMember = await prisma.chatMember.findFirst({
+            where: { chatId: data.chatId, userId: { not: userId } },
+          });
+          if (otherMember) {
+            const blocked = await prisma.friendship.findFirst({
+              where: {
+                status: 'BLOCKED',
+                OR: [
+                  { senderId: userId, receiverId: otherMember.userId },
+                  { senderId: otherMember.userId, receiverId: userId },
+                ],
+              },
+            });
+            if (blocked) return ack?.({ error: 'Спілкування з цим користувачем заблоковано' });
+          }
+        }
+
         const content = data.content ? sanitizeText(data.content).slice(0, 4000) : null;
 
         const message = await prisma.message.create({

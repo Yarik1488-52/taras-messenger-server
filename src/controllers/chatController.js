@@ -1,6 +1,10 @@
 const prisma = require('../config/prisma');
 const { sanitizeText } = require('../middleware/security');
 
+const MEMBER_INCLUDE = {
+  members: { include: { user: { select: { id: true, nickname: true, avatarUrl: true, presence: true } } } },
+};
+
 // Приватний чат: створюється (або повертається існуючий) між двома юзерами
 async function getOrCreatePrivateChat(req, res, next) {
   try {
@@ -15,7 +19,7 @@ async function getOrCreatePrivateChat(req, res, next) {
           { members: { some: { userId } } },
         ],
       },
-      include: { members: true },
+      include: MEMBER_INCLUDE,
     });
     if (existing) return res.json({ chat: existing });
 
@@ -24,7 +28,7 @@ async function getOrCreatePrivateChat(req, res, next) {
         type: 'PRIVATE',
         members: { create: [{ userId: meId, role: 'MEMBER' }, { userId, role: 'MEMBER' }] },
       },
-      include: { members: true },
+      include: MEMBER_INCLUDE,
     });
     res.status(201).json({ chat });
   } catch (err) {
@@ -51,7 +55,7 @@ async function createGroupOrChannel(req, res, next) {
           ],
         },
       },
-      include: { members: true },
+      include: MEMBER_INCLUDE,
     });
     res.status(201).json({ chat });
   } catch (err) {
@@ -64,7 +68,7 @@ async function listMyChats(req, res, next) {
     const chats = await prisma.chat.findMany({
       where: { members: { some: { userId: req.user.id } } },
       include: {
-        members: { include: { user: { select: { id: true, nickname: true, avatarUrl: true, presence: true } } } },
+        ...MEMBER_INCLUDE,
         messages: { orderBy: { createdAt: 'desc' }, take: 1 },
       },
       orderBy: { createdAt: 'desc' },
@@ -94,4 +98,35 @@ async function addMember(req, res, next) {
   }
 }
 
-module.exports = { getOrCreatePrivateChat, createGroupOrChannel, listMyChats, addMember };
+// Видалити чат (для себе) — просто виходимо з нього. Для приватного чату
+// це означає "видалити переписку у себе": історія лишається на боці
+// співрозмовника, а в нас чат зникне зі списку, і при новому старті
+// розмови створиться чистий чат без старої історії.
+async function leaveChat(req, res, next) {
+  try {
+    const { chatId } = req.params;
+    await prisma.chatMember.deleteMany({ where: { chatId, userId: req.user.id } });
+    res.json({ message: 'Чат видалено' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Увімкнути/вимкнути сповіщення для конкретного чату ("не сповіщати")
+async function muteChat(req, res, next) {
+  try {
+    const { chatId } = req.params;
+    const { muted } = req.body;
+
+    await prisma.chatMember.update({
+      where: { chatId_userId: { chatId, userId: req.user.id } },
+      // Далека дата в майбутньому = "заглушено назавжди", null = звук увімкнено
+      data: { mutedUntil: muted ? new Date('2099-01-01') : null },
+    });
+    res.json({ message: muted ? 'Сповіщення вимкнено' : 'Сповіщення увімкнено' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { getOrCreatePrivateChat, createGroupOrChannel, listMyChats, addMember, leaveChat, muteChat };

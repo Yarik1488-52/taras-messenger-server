@@ -107,4 +107,79 @@ async function listIncomingRequests(req, res, next) {
   }
 }
 
-module.exports = { sendRequest, respondRequest, listFriends, removeFriend, listIncomingRequests };
+// Заблокувати користувача: заблокований більше не може писати/дзвонити.
+// Якщо запису дружби ще не було — створюємо одразу зі статусом BLOCKED.
+async function blockUser(req, res, next) {
+  try {
+    const { userId } = req.body;
+    if (userId === req.user.id) return res.status(400).json({ error: 'Не можна заблокувати себе' });
+
+    const existing = await prisma.friendship.findFirst({
+      where: {
+        OR: [
+          { senderId: req.user.id, receiverId: userId },
+          { senderId: userId, receiverId: req.user.id },
+        ],
+      },
+    });
+
+    if (existing) {
+      await prisma.friendship.update({
+        where: { id: existing.id },
+        data: { status: 'BLOCKED', senderId: req.user.id, receiverId: userId },
+      });
+    } else {
+      await prisma.friendship.create({
+        data: { senderId: req.user.id, receiverId: userId, status: 'BLOCKED' },
+      });
+    }
+    res.json({ message: 'Користувача заблоковано' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function unblockUser(req, res, next) {
+  try {
+    const { userId } = req.body;
+    await prisma.friendship.deleteMany({
+      where: {
+        status: 'BLOCKED',
+        senderId: req.user.id,
+        receiverId: userId,
+      },
+    });
+    res.json({ message: 'Розблоковано' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Скарга на користувача — записується в AuditLog, адміни бачать через /admin/logs
+async function reportUser(req, res, next) {
+  try {
+    const { userId, reason } = req.body;
+    await prisma.auditLog.create({
+      data: {
+        actorId: req.user.id,
+        action: 'USER_REPORTED',
+        targetId: userId,
+        meta: { reason: reason?.slice(0, 500) || 'Без причини' },
+      },
+    });
+    res.status(201).json({ message: 'Скаргу надіслано' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = {
+  sendRequest,
+  respondRequest,
+  listFriends,
+  removeFriend,
+  listIncomingRequests,
+  blockUser,
+  unblockUser,
+  reportUser,
+};
