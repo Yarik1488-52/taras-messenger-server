@@ -18,6 +18,10 @@ const { registerSocketHandlers } = require('./sockets');
 
 const app = express();
 
+// Render (і більшість хмарних хостингів) працюють через reverse proxy —
+// без цього express-rate-limit не може коректно визначити IP користувача
+app.set('trust proxy', 1);
+
 // --- Безпека та базові middleware ---
 app.use(helmetMiddleware);
 app.use(corsMiddleware);
