@@ -1,12 +1,6 @@
 const multer = require('multer');
-const path = require('path');
-const crypto = require('crypto');
-const fs = require('fs');
 
-const uploadDir = process.env.UPLOAD_DIR || './uploads';
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-
-// Білий список дозволених розширень/MIME — захист від завантаження виконуваних файлів
+// Білий список дозволених MIME — захист від завантаження виконуваних файлів
 const ALLOWED_MIME = new Set([
   'image/jpeg', 'image/png', 'image/gif', 'image/webp',
   'video/mp4', 'video/webm', 'video/quicktime',
@@ -16,13 +10,10 @@ const ALLOWED_MIME = new Set([
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ]);
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => {
-    const uniqueName = crypto.randomUUID() + path.extname(file.originalname).toLowerCase();
-    cb(null, uniqueName);
-  },
-});
+// Файли тримаються в пам'яті процесу (не на диску) — диск на Render не
+// постійний і стирається при кожному перезапуску. Звідси файл одразу
+// йде далі, в постійне хмарне сховище (Cloudinary), див. routes/upload.js
+const storage = multer.memoryStorage();
 
 function fileFilter(req, file, cb) {
   if (!ALLOWED_MIME.has(file.mimetype)) {

@@ -16,6 +16,7 @@ function publicUser(u) {
     statusText: u.statusText,
     presence: u.presence,
     role: u.role,
+    createdAt: u.createdAt,
   };
 }
 
@@ -138,13 +139,16 @@ async function verifyEmailCode(req, res, next) {
     const { email, code, nickname } = req.body;
     if (!email || !code) return res.status(400).json({ error: 'email і code обовʼязкові' });
 
-    const result = otpStore.verifyCode(email, code);
+    // Перевіряємо код, але поки НЕ видаляємо — для нового користувача
+    // знадобиться ввести ще й нікнейм, і тоді код перевіриться вдруге
+    const result = otpStore.checkCode(email, code);
     if (!result.ok) return res.status(400).json({ error: result.reason });
 
     let user = await prisma.user.findUnique({ where: { email } });
 
     if (!user) {
-      // Новий користувач — потрібен нікнейм для завершення реєстрації
+      // Новий користувач — потрібен нікнейм для завершення реєстрації.
+      // Код лишається дійсним, доки не прийде фінальний запит із нікнеймом.
       if (!nickname) {
         return res.status(200).json({ needNickname: true });
       }
@@ -152,9 +156,6 @@ async function verifyEmailCode(req, res, next) {
       const nicknameTaken = await prisma.user.findUnique({ where: { nickname: cleanNickname } });
       if (nicknameTaken) return res.status(409).json({ error: 'Цей нікнейм вже зайнятий' });
 
-      // Пароля в цього акаунта немає — заходить лише через email-код;
-      // passwordHash все одно обовʼязковий у схемі, тож ставимо випадковий
-      // недоступний для підбору хеш (жодного паролю користувач не знає й не використовує).
       const randomPassword = require('crypto').randomBytes(32).toString('hex');
       const passwordHash = await hashPassword(randomPassword);
 
@@ -165,6 +166,8 @@ async function verifyEmailCode(req, res, next) {
       if (user.isBanned) return res.status(403).json({ error: 'Акаунт заблоковано', reason: user.banReason });
       await prisma.user.update({ where: { id: user.id }, data: { presence: 'ONLINE', lastSeenAt: new Date() } });
     }
+
+    otpStore.consumeCode(email); // усе успішно завершилось — тепер код більше не дійсний
 
     const accessToken = signAccessToken({ sub: user.id, role: user.role });
     const refreshToken = signRefreshToken({ sub: user.id });

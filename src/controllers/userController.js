@@ -73,22 +73,6 @@ async function updateProfile(req, res, next) {
   }
 }
 
-// Файл вже збережено multer-middleware у /uploads, тут лише прив'язуємо URL
-// (лишається для зворотної сумісності; новий UI аватарки використовує base64 через updateProfile)
-async function updateAvatar(req, res, next) {
-  try {
-    if (!req.file) return res.status(400).json({ error: 'Файл аватара не передано' });
-    const avatarUrl = `/uploads/${req.file.filename}`;
-    const user = await prisma.user.update({
-      where: { id: req.user.id },
-      data: { avatarUrl },
-    });
-    res.json({ user: publicUser(user) });
-  } catch (err) {
-    next(err);
-  }
-}
-
 async function searchUsers(req, res, next) {
   try {
     const rawQ = String(req.query.q || '').trim();
@@ -124,4 +108,27 @@ async function searchUsers(req, res, next) {
   }
 }
 
-module.exports = { getMe, updateProfile, updateAvatar, searchUsers, checkUsernameAvailable };
+// Публічний профіль будь-якого користувача (для перегляду картки друга/учасника чату) —
+// email навмисно не повертаємо, це приватна інформація власника акаунта
+async function getUserProfile(req, res, next) {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.params.userId } });
+    if (!user || user.isBanned) return res.status(404).json({ error: 'Користувача не знайдено' });
+
+    res.json({
+      user: {
+        id: user.id,
+        nickname: user.nickname,
+        username: user.username,
+        avatarUrl: user.avatarUrl,
+        statusText: user.statusText,
+        presence: user.presence,
+        createdAt: user.createdAt,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { getMe, updateProfile, searchUsers, checkUsernameAvailable, getUserProfile };
