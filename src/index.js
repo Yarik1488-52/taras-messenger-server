@@ -15,6 +15,7 @@ const {
 } = require('./middleware/security');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 const { registerSocketHandlers } = require('./sockets');
+const { startMediaCleanupJob } = require('./utils/mediaCleanup');
 
 const app = express();
 
@@ -74,6 +75,7 @@ registerSocketHandlers(io);
 
 server.listen(PORT, () => {
   console.log(`✅ Taras Messenger server running on port ${PORT} (${process.env.SSL_KEY_PATH ? 'HTTPS' : 'HTTP'})`);
+  startMediaCleanupJob();
 });
 
 process.on('unhandledRejection', (err) => console.error('Unhandled rejection:', err));

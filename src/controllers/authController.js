@@ -178,4 +178,60 @@ async function verifyEmailCode(req, res, next) {
   }
 }
 
-module.exports = { register, login, refresh, changePassword, logout, publicUser, requestEmailCode, verifyEmailCode };
+// --- Скидання паролю через код на email ("Забули пароль?") ---
+
+async function requestPasswordReset(req, res, next) {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'email обовʼязковий' });
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    // Навмисно завжди відповідаємо однаково, є акаунт чи ні —
+    // щоб не давати змогу перевіряти, які email зареєстровані
+    if (user) {
+      const code = otpStore.issueCode(`reset:${email}`);
+      await sendLoginCode(email, code);
+    }
+    res.json({ message: 'Якщо такий акаунт існує, код надіслано на пошту' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function resetPassword(req, res, next) {
+  try {
+    const { email, code, newPassword } = req.body;
+    if (!email || !code || !newPassword) {
+      return res.status(400).json({ error: 'email, code і newPassword обовʼязкові' });
+    }
+    if (newPassword.length < 8 || !/[A-Z]/.test(newPassword) || !/[0-9]/.test(newPassword)) {
+      return res.status(400).json({ error: 'Пароль: мін. 8 символів, велика літера, цифра' });
+    }
+
+    const result = otpStore.verifyCode(`reset:${email}`, code);
+    if (!result.ok) return res.status(400).json({ error: result.reason });
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) return res.status(404).json({ error: 'Користувача не знайдено' });
+
+    const passwordHash = await hashPassword(newPassword);
+    await prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
+
+    res.json({ message: 'Пароль успішно змінено, тепер можна увійти' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = {
+  register,
+  login,
+  refresh,
+  changePassword,
+  logout,
+  publicUser,
+  requestEmailCode,
+  verifyEmailCode,
+  requestPasswordReset,
+  resetPassword,
+};
